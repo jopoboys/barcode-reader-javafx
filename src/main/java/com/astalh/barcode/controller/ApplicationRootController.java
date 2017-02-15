@@ -1,17 +1,33 @@
 package com.astalh.barcode.controller;
 
-import com.astalh.barcode.common.WebCamInfo;
 import com.github.sarxos.webcam.Webcam;
 import com.github.sarxos.webcam.WebcamPanel;
+import com.github.sarxos.webcam.WebcamResolution;
+import com.google.zxing.*;
+import com.google.zxing.client.j2se.BufferedImageLuminanceSource;
+import com.google.zxing.client.j2se.MatrixToImageWriter;
+import com.google.zxing.common.HybridBinarizer;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
+import javafx.embed.swing.SwingFXUtils;
 import javafx.embed.swing.SwingNode;
 import javafx.fxml.Initializable;
+import javafx.scene.Parent;
+import javafx.scene.Scene;
+import javafx.scene.control.*;
+import javafx.scene.image.ImageView;
+import javafx.scene.image.WritableImage;
 import javafx.scene.layout.AnchorPane;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
+import javafx.stage.StageStyle;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
+import java.awt.image.BufferedImage;
 import java.net.URL;
 import java.util.ResourceBundle;
 
@@ -20,18 +36,42 @@ import java.util.ResourceBundle;
  */
 public class ApplicationRootController implements Initializable{
 
+    private static Logger logger = LoggerFactory.getLogger(ApplicationRootController.class);
+
     /** UI Controls **/
     public AnchorPane mainContainer;
+    public AnchorPane webcamContainerAnchorPane;
+    public ListView<String> barcodeListView;
+    public TextField txtBarcodeNumber;
+    public ComboBox<BarcodeFormat> cmbBarcodeType;
+    public Button btnGenerate;
+    public Label lblStatus;
 
-    ObservableList<WebCamInfo> options = FXCollections.observableArrayList();
+    private Stage parentStage;
+
+    public Stage getParentStage() {
+        return parentStage;
+    }
+
+    public void setParentStage(Stage parentStage) {
+        this.parentStage = parentStage;
+    }
+
+    ObservableList<BarcodeFormat> options = FXCollections.observableArrayList();
     private Webcam defaultWebcam = null;
     private WebcamPanel defaultWebcamPanel = null;
     private final SwingNode defaultWebcamPanelNode = new SwingNode();
+    Writer writer = new MultiFormatWriter();
+
+    private Runnable barcodeScannerRunnable = null;
 
 
     @Override
     public void initialize(URL location, ResourceBundle resources) {
-
+        defaultWebcam = Webcam.getDefault();
+        defaultWebcam.setViewSize(WebcamResolution.QVGA.getSize());
+        defaultWebcamPanel = new WebcamPanel(defaultWebcam, true);
+        creatDefaultWebcamPanel(defaultWebcamPanelNode);
     }
 
     private void creatDefaultWebcamPanel(final SwingNode swingNode) {
@@ -42,26 +82,132 @@ public class ApplicationRootController implements Initializable{
         });
     }
 
-
     public void init(){
-        Task<Webcam> getWebcamTask = new Task<Webcam>() {
+        initUI();
+        barcodeScannerRunnable = getBarcodeReaderThread();
+        new Thread(barcodeScannerRunnable).start();
+    }
+
+    private void initUI() {
+        Platform.runLater(() -> {
+            webcamContainerAnchorPane.getChildren().clear();
+            webcamContainerAnchorPane.getChildren().add(defaultWebcamPanelNode);
+            setRenderBarcodeTypeList();
+        });
+        btnGenerate.setOnAction(event -> generateBarcode());
+
+    }
+
+    private void setRenderBarcodeTypeList() {
+        for(BarcodeFormat barcodeFormat : BarcodeFormat.values()){
+            options.add(barcodeFormat);
+        }
+        cmbBarcodeType.setItems(options);
+    }
+
+    private void generateBarcode() {
+        Task<BufferedImage> barcodeWriterTask = new Task<BufferedImage>() {
             @Override
-            protected Webcam call() throws Exception {
-                return Webcam.getDefault();
+            protected BufferedImage call() throws Exception {
+                String contents = txtBarcodeNumber.getText().trim();
+                BarcodeFormat format = cmbBarcodeType.getSelectionModel().getSelectedItem();
+                int width = 400;
+                int height = 300;
+                if(contents == null || (contents != null && contents.isEmpty()) || format == null){
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setContentText("Please enter valid content and barcode format!");
+                        alert.setResult(ButtonType.CLOSE);
+                        alert.initStyle(StageStyle.UNDECORATED);
+                        alert.show();
+                    });
+                    return null;
+                }
+                try {
+                    if(format == BarcodeFormat.QR_CODE){
+                        height = 400;
+                    }
+                    BufferedImage image = MatrixToImageWriter.toBufferedImage(writer.encode(contents, format, width, height));
+                    return image;
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                                Alert alert = new Alert(Alert.AlertType.ERROR);
+                                alert.setContentText("Cannot generate barcode reason : " + e.getMessage());
+                                alert.setResult(ButtonType.CLOSE);
+                                alert.initStyle(StageStyle.UNDECORATED);
+                                alert.show();
+                    });
+                    logger.error("Exception : " + e.getMessage());
+                    return null;
+                }
             }
         };
 
-        getWebcamTask.setOnSucceeded(event -> {
-            defaultWebcam = getWebcamTask.getValue();
-            defaultWebcamPanel = new WebcamPanel(defaultWebcam);
-            Platform.runLater(() -> {
-                creatDefaultWebcamPanel(defaultWebcamPanelNode);
-                mainContainer.getChildren().clear();
-                mainContainer.getChildren().add(defaultWebcamPanelNode);
-            });
+        barcodeWriterTask.setOnSucceeded(event -> {
+            BufferedImage result = barcodeWriterTask.getValue();
+            if(result != null){
+                openBarcodeModalWindow(result);
+            }
         });
 
-        new Thread(getWebcamTask).start();
+        new Thread(barcodeWriterTask).start();
+    }
 
+    private void openBarcodeModalWindow(BufferedImage result) {
+        WritableImage image = SwingFXUtils.toFXImage(result, null);
+        Stage stage = new Stage();
+        ImageView imageView = new ImageView(image);
+        imageView.setLayoutX(10);
+        imageView.setLayoutY(10);
+        imageView.setStyle("-fx-border-color: black");
+        AnchorPane parent = new AnchorPane(imageView);
+        parent.setStyle("-fx-background-color: rgba(0, 0, 0, 0.6)");
+        parent.setPrefWidth(image.getWidth() + 20);
+        parent.setPrefHeight(image.getHeight() + 20);
+        stage.setScene(new Scene(parent));
+        stage.setTitle("Generated Barcode");
+        stage.initModality(Modality.WINDOW_MODAL);
+        stage.initOwner(parentStage);
+        stage.show();
+    }
+
+    private Runnable getBarcodeReaderThread() {
+        return () -> {
+            logger.info("Starting Barcode Reader Thread");
+            BufferedImage image = null;
+            Reader reader = new MultiFormatReader();
+            Result lastResult = null;
+            if(defaultWebcam != null){
+                while(defaultWebcam.isOpen()){
+                    if((image = defaultWebcam.getImage()) == null){
+                        continue;
+                    }
+                    try {
+                        LuminanceSource source = new BufferedImageLuminanceSource(image);
+                        BinaryBitmap bitmap = new BinaryBitmap(new HybridBinarizer(source));
+                        final Result result = reader.decode(bitmap);
+                        if(result != null && result.getText() != null) {
+                            if(lastResult == null) {
+                                logger.info("Barcode text is " + result.getText());
+                                Platform.runLater(() -> barcodeListView.getItems().add(result.getText()));
+                            }else if(lastResult.getText()!= null && !lastResult.getText().equals(result.getText())){
+                                logger.info("Barcode text is " + result.getText());
+                                Platform.runLater(() -> barcodeListView.getItems().add(result.getText()));
+                            }
+                        }
+                        lastResult = result;
+                    } catch (NotFoundException notEx){
+
+                    }catch (Exception ex) {
+                        logger.error("Exception while reading barcode : ", ex);
+                    }
+                }
+            }
+        };
+    }
+
+    public void onClose() {
+        defaultWebcam.close();
+        logger.info("Closing Application Root Controller");
     }
 }
