@@ -167,6 +167,7 @@ public class ApplicationRootController implements Initializable{
         stage.setScene(new Scene(parent));
         stage.setTitle("Generated Barcode");
         stage.initModality(Modality.WINDOW_MODAL);
+        stage.setResizable(false);
         stage.initOwner(parentStage);
         stage.show();
     }
