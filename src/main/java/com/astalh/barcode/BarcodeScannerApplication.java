@@ -1,11 +1,11 @@
 package com.astalh.barcode;
 
 import com.astalh.barcode.controller.ApplicationRootController;
-import com.github.sarxos.webcam.Webcam;
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.image.Image;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +29,7 @@ public class BarcodeScannerApplication extends Application {
             ApplicationRootController controller = fxmlLoader.getController();
             Scene scene = new Scene(root, 600, 400);
             primaryStage.setTitle("Barcode Scanner");
+            primaryStage.getIcons().add(new Image(getClass().getClassLoader().getResource("icons/barcode.png").toExternalForm()));
             primaryStage.setScene(scene);
             primaryStage.setResizable(false);
             primaryStage.setOnCloseRequest(event -> {
